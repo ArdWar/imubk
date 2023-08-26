@@ -61,30 +61,30 @@
 class MTI3
 {
 public:
-    MTI3(struct device const *spi, struct spi_config cfg);
-    ~MTI3();
+	MTI3(struct device const *spi, struct spi_config cfg);
+	~MTI3();
 
-    int8_t getStatus(uint16_t *notifCount, uint16_t *measCount);
-    int8_t getNotification(uint8_t *data, uint16_t notifCount);
-    int8_t getMeasurement(uint8_t *data, uint16_t measCount);
-    int8_t getConfig(uint8_t *data, uint8_t length);
-    int8_t setConfig(uint8_t *data, uint8_t length);
-    int8_t swapEndian(uint16_t *data, uint8_t len);
+	int8_t getStatus(uint16_t *notifCount, uint16_t *measCount);
+	int8_t getNotification(uint8_t *data, uint16_t notifCount);
+	int8_t getMeasurement(uint8_t *data, uint16_t measCount);
+	int8_t getConfig(uint8_t *data, uint8_t length);
+	int8_t setConfig(uint8_t *data, uint8_t length);
+	int8_t swapEndian(uint16_t *data, uint8_t len);
 
 private:
-    uint8_t calcChecksum(uint8_t *pld, uint8_t len);
+	uint8_t calcChecksum(uint8_t *pld, uint8_t len);
 
-    struct device const *_spi;
-    struct spi_config _cfg;
+	struct device const *_spi;
+	struct spi_config _cfg;
 
-    uint8_t _spi_txbuf[128];
-    uint8_t _spi_rxbuf[128];
+	uint8_t _spi_txbuf[128];
+	uint8_t _spi_rxbuf[128];
 
-    struct spi_buf _tx_bufs[1];
-    struct spi_buf _rx_bufs[1];
+	struct spi_buf _tx_bufs[1];
+	struct spi_buf _rx_bufs[1];
 
-    struct spi_buf_set _spi_txset;
-    struct spi_buf_set _spi_rxset;
+	struct spi_buf_set _spi_txset;
+	struct spi_buf_set _spi_rxset;
 };
 
 #endif

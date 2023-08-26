@@ -406,7 +406,6 @@ int main()
 	gpio_pin_configure(gpia, 8, GPIO_OUTPUT_INACTIVE);
 	gpio_pin_configure(gpid, 3, GPIO_OUTPUT_INACTIVE);
 	uart_callback_set(uart_3, serial_cb, NULL);
-	printk("ADC r%d\n", adc1c5c.acquisition_time);
 	adc_channel_setup(adcc1, &adc1c5c);
 
 	mti3_setup();

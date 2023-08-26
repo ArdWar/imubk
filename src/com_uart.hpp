@@ -11,29 +11,29 @@
 
 typedef struct datcom_payload
 {
-    uint8_t len;
-    uint8_t *pld;
+	uint8_t len;
+	uint8_t *pld;
 } datcom_payload;
 
-
-class DATCOM {
+class DATCOM
+{
 public:
-    DATCOM(struct device const *uart);
-    ~DATCOM();
+	DATCOM(struct device const *uart);
+	~DATCOM();
 
-    int8_t setup();
-    int8_t putPayload(datcom_payload *pld);
-    int8_t txFinish();
-    int8_t txAbort();
-    // int8_t getMeasurement(uint8_t *data, uint8_t *cnt);
+	int8_t setup();
+	int8_t putPayload(datcom_payload *pld);
+	int8_t txFinish();
+	int8_t txAbort();
+	// int8_t getMeasurement(uint8_t *data, uint8_t *cnt);
 private:
-    int8_t send();
+	int8_t send();
 
-    struct device const *_uart;
-    datcom_payload *_pld[COM_RINGBUFFER_LEN];
-    uint8_t _uartTxBusy = 0;
-    uint8_t _pldHead = 0;
-    uint8_t _pldTail = 0;
+	struct device const *_uart;
+	datcom_payload *_pld[COM_RINGBUFFER_LEN];
+	uint8_t _uartTxBusy = 0;
+	uint8_t _pldHead = 0;
+	uint8_t _pldTail = 0;
 };
 
 #endif
