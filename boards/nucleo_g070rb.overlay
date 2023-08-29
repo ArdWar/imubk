@@ -11,7 +11,7 @@
 // };
 
 &usart3 {
-	pinctrl-0 = <&usart3_tx_pb8 &usart3_rx_pb11>;
+	pinctrl-0 = <&usart3_tx_pb8 &usart3_rx_pb9>;
 	pinctrl-names = "default";
 	current-speed = <57600>;
 	status = "okay";
@@ -33,7 +33,7 @@
 	status = "okay";
 };
 
-&dmamux1 {
+&dmamux1 {	
 	status = "okay";
 };
 

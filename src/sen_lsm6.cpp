@@ -34,18 +34,10 @@ int8_t LSM6::setup()
 
 int8_t LSM6::getMeasurement(uint8_t *data, uint8_t *cnt)
 {
-	uint8_t txbuf = 0x3A;
-	uint8_t rxbuf[2];
-	i2c_write_read(_i2c, _addr, &txbuf, 1, rxbuf, 2);
-	uint16_t fifocnt = ((uint16_t)rxbuf[1] & 0b00000011) << 8 | (uint16_t)rxbuf[0];
-	fifocnt = fifocnt > *cnt ? *cnt : fifocnt;
-	cnt = 0;
-	for (; fifocnt > 0; fifocnt--)
-	{
-		txbuf = 0x78;
-		i2c_write_read(_i2c, _addr, &txbuf, 1, data, 7);
-		(*cnt)++;
-	}
-
+	*cnt = 0;
+	uint8_t txbuf = 0x22;
+	i2c_write_read(_i2c, _addr, &txbuf, 1, data, 12);
+	(*cnt)++;
+	
 	return 0;
 }

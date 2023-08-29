@@ -22,6 +22,11 @@ public:
 	~DATCOM();
 
 	int8_t setup();
+	/**
+	 * @brief put message payload into queue
+	 * @param pld
+	 * @return 0 if payload sucessfully registered
+	 */
 	int8_t putPayload(datcom_payload *pld);
 	int8_t txFinish();
 	int8_t txAbort();

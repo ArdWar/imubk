@@ -68,7 +68,9 @@ int8_t MTI3::setConfig(uint8_t *data, uint8_t length)
 	memcpy(&_spi_txbuf[4], data, length);
 	_spi_txbuf[4 + length] = calcChecksum(data, length);
 	_tx_bufs[0].len = 4 + length + 1;
+	_rx_bufs[0].len = 4 + length + 1;
 	_tx_bufs[0].buf = _spi_txbuf;
+
 	return spi_transceive(_spi, &_cfg, &_spi_txset, &_spi_rxset);
 }
 

@@ -47,13 +47,12 @@ int8_t ADXL::getMeasurement(uint8_t *data, uint8_t *cnt)
 	ret += i2c_write_read(_i2c, _addr, &txdata, 1, &bufcnt, 1);
 
 	bufcnt = bufcnt > *cnt ? *cnt : bufcnt;
-
 	*cnt = 0;
 
 	for (; bufcnt > 0; bufcnt--)
 	{
 		txdata = 0x32;
-		ret += i2c_write_read(_i2c, _addr, &txdata, 1, data, 6);
+		ret += i2c_write_read(_i2c, _addr, &txdata, 1, &data[*cnt * 6], 6);
 		(*cnt)++;
 	}
 

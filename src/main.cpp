@@ -16,6 +16,7 @@
 #include "sen_lis3.hpp"
 #include "sen_ms56.hpp"
 #include "com_uart.hpp"
+#include "protocol_mgr.hpp"
 #include "util.hpp"
 #include "data.hpp"
 
@@ -26,7 +27,7 @@
 #define LIS3_ADDR 0x1E
 #define MS56_ADDR 0x77
 
-static const struct device *const gpia = DEVICE_DT_GET(DT_NODELABEL(gpioa));
+static const struct device *const gpib = DEVICE_DT_GET(DT_NODELABEL(gpiob));
 static const struct device *const gpic = DEVICE_DT_GET(DT_NODELABEL(gpioc));
 static const struct device *const gpid = DEVICE_DT_GET(DT_NODELABEL(gpiod));
 static const struct device *const adcc1 = DEVICE_DT_GET(DT_NODELABEL(adc1));
@@ -66,12 +67,28 @@ struct adc_sequence sequence = {
 
 uint32_t i2c_cfg = I2C_SPEED_SET(I2C_SPEED_FAST) | I2C_MODE_CONTROLLER;
 uint8_t sensorpoolflag = 0;
-// uint8_t spisensorpoolflag = 0;
+uint8_t pktcounter = 0;
 uint8_t datcomsendflag = 0;
 uint8_t buzzerpingflag = 0;
+uint8_t uartrxflag = 0;
 uint8_t buzzerpingrate = 1;
+uint8_t buzzerpinging = 0;
+uint8_t uartrxbuf1[32];
+uint8_t uartrxbuf2[32];
+uart_event_rx rxevt;
 
-void serial_cb(const struct device *dev, struct uart_event *evt, void *user_data);
+void buzzer_ping(int16_t freq)
+{
+	int8_t ret = 0;
+	if (freq > 0)
+	{
+		ret = pwm_set_cycles(pwm_bz, 1, 100000 / freq, 50000 / freq, PWM_POLARITY_NORMAL);
+	}
+	else
+	{
+		ret = pwm_set_cycles(pwm_bz, 1, 10, 0, PWM_POLARITY_NORMAL);
+	}
+}
 
 void serial_cb(const struct device *dev, struct uart_event *evt, void *user_data)
 {
@@ -83,8 +100,11 @@ void serial_cb(const struct device *dev, struct uart_event *evt, void *user_data
 	case UART_TX_ABORTED:
 		break;
 	case UART_RX_RDY:
+		rxevt = evt->data.rx;
+		uartrxflag = 1;
 		break;
 	case UART_RX_BUF_REQUEST:
+		// nop
 		break;
 	case UART_RX_BUF_RELEASED:
 		break;
@@ -99,8 +119,8 @@ void serial_cb(const struct device *dev, struct uart_event *evt, void *user_data
 
 void adxl_get_data()
 {
-	uint8_t cnt = sizeof(ADXLRawData) * 2;
-	uint8_t adxldata[cnt];
+	uint8_t cnt = 2;
+	uint8_t adxldata[sizeof(ADXLRawData) * cnt];
 	adxl->getMeasurement(adxldata, &cnt);
 	for (int8_t i = 0; i < cnt; i++)
 	{
@@ -110,8 +130,8 @@ void adxl_get_data()
 
 void lsm6_get_data()
 {
-	uint8_t cnt = sizeof(LSM6RawData) * 2;
-	uint8_t lsm6data[cnt];
+	uint8_t cnt = 1;
+	uint8_t lsm6data[sizeof(LSM6RawData)];
 	lsm6->getMeasurement(lsm6data, &cnt);
 	for (int8_t i = 0; i < cnt; i++)
 	{
@@ -121,9 +141,10 @@ void lsm6_get_data()
 
 void lis3_get_data()
 {
-	uint8_t cnt = sizeof(LIS3RawData) * 2;
-	uint8_t lis3data[cnt];
+	uint8_t cnt = 2;
+	uint8_t lis3data[6];
 	lis3->getMeasurement(lis3data, &cnt);
+
 	for (int8_t i = 0; i < cnt; i++)
 	{
 		ring_buf_put(&lis3_ring_buf, &lis3data[i * sizeof(LIS3RawData)], sizeof(LIS3RawData));
@@ -140,7 +161,7 @@ void ms5611_get_data()
 
 uint32_t mti3_parse_32b(uint8_t *data)
 {
-	return data[0] << 8 | data[1] << 0; // | data[2]<<8 | data[3];
+	return data[0] << 24 | data[1] << 16 | data[2] << 8 | data[3];
 }
 
 int8_t mti3_parse_measdata(uint8_t *measData, uint8_t len, MTI3RawData *data)
@@ -166,6 +187,7 @@ int8_t mti3_parse_measdata(uint8_t *measData, uint8_t len, MTI3RawData *data)
 	{
 		uint16_t dataID = ((uint16_t)measData[idx + 1] | ((uint16_t)measData[idx] << 8));
 		uint8_t dataLen = measData[idx + 2];
+
 		switch (dataID & 0xFFFF0)
 		{
 		case XDI_ACCELERATION:
@@ -194,22 +216,22 @@ int8_t mti3_parse_measdata(uint8_t *measData, uint8_t len, MTI3RawData *data)
 			data->dvZ = mti3_parse_32b(&measData[idx + 11]);
 			break;
 		case XDI_DELTAQ:
-			data->dqX = mti3_parse_32b(&measData[idx + 3]);
-			data->dqY = mti3_parse_32b(&measData[idx + 7]);
-			data->dqZ = mti3_parse_32b(&measData[idx + 11]);
+			data->dqA = mti3_parse_32b(&measData[idx + 3]);
+			data->dqB = mti3_parse_32b(&measData[idx + 7]);
+			data->dqC = mti3_parse_32b(&measData[idx + 11]);
+			data->dqD = mti3_parse_32b(&measData[idx + 15]);
 			break;
 		case XDI_SAMPLETIMEFINE:
 			data->sTime = mti3_parse_32b(&measData[idx + 3]);
 			break;
 		case XDI_PACKETCOUNTER:
-			data->sTime = mti3_parse_32b(&measData[idx + 3]);
+			data->counter = mti3_parse_32b(&measData[idx + 3]);
 			break;
 		default:
 			break;
 		}
 		idx += dataLen + 3;
 	}
-
 	return 0;
 }
 
@@ -244,62 +266,60 @@ void mti3_get_data()
 	}
 }
 
-void mti3_setup()
+int8_t mti3_get_msg()
 {
-	uint8_t goConfig[] = {XSENS_GOTOCONFIG, 0};
-	mti3->setConfig(goConfig, sizeof(goConfig));
+	uint16_t notifCnt;
+	uint16_t measCnt;
 
-	uint16_t setFormat[] = {XSENS_SETOUTPUTCONFIGURATION | 36 << 8,
-							XDI_PACKETCOUNTER, 0xFFFF,
-							XDI_SAMPLETIMEFINE, 0xFFFF,
-							XDI_EULERANGLES | XDI_ENU | XDI_I32, 0xFFFF,
-							XDI_ACCELERATION | XDI_I32, 0xFFFF,
-							XDI_RATEOFTURN | XDI_I32, 0xFFFF,
-							XDI_MAGNETICFIELD | XDI_I32, 0xFFFF,
-							XDI_DELTAV | XDI_I32, 0xFFFF,
-							XDI_DELTAQ | XDI_I32, 0xFFFF,
-							XDI_STATUSWORD, 0xFFFF};
-	mti3->swapEndian(setFormat, sizeof(setFormat));
-	mti3->setConfig((uint8_t *)setFormat, sizeof(setFormat));
-
-	uint8_t goMeas[] = {XSENS_GOTOMEASUREMENT, 0};
-	mti3->setConfig(goMeas, sizeof(goMeas));
+	mti3->getStatus(&notifCnt, &measCnt);
+	if (notifCnt)
+	{
+		uint8_t notifData[notifCnt + 4];
+		int8_t r = mti3->getNotification(notifData, notifCnt);
+	}
+	return notifCnt;
 }
 
-void uart_dummy()
+void mti3_setup()
 {
-	// for(uint16_t i=0;i<43;i++) {
-	// 	data[i] = buzzerpingrate;
-	// 	// adxldata[i] = (int)((float)adxldata[i] * 3.14159265359);
-	// 	// adxldata[i] /= i;
-	// }
-	MTI3RawData mtidata;
-	ring_buf_get(&mti3_ring_buf, (uint8_t *)&mtidata, sizeof(MTI3RawData));
+	uint8_t goMeas[] = {XSENS_GOTOMEASUREMENT, 0};
+	mti3->setConfig(goMeas, 2);
+}
+
+void datcom_send()
+{
+	ADXLRawData adxldata;
+	LSM6RawData lsm6data;
+	LIS3RawData lis3data;
+	MTI3RawData mti3data;
+	ring_buf_get(&adxl_ring_buf, (uint8_t *)&adxldata, sizeof(ADXLRawData));
+	ring_buf_get(&lsm6_ring_buf, (uint8_t *)&lsm6data, sizeof(LSM6RawData));
+	ring_buf_get(&lis3_ring_buf, (uint8_t *)&lis3data, sizeof(LIS3RawData));
+	ring_buf_get(&mti3_ring_buf, (uint8_t *)&mti3data, sizeof(MTI3RawData));
 
 	// printk("A % 6d % 6d % 6d\n", mtidata.accX, mtidata.accY, mtidata.accZ);
 
-	uint8_t *data = new uint8_t[50]();
-	// for(uint16_t i=0;i<50;i++) {
-	// 	data[i] = buzzerpingrate*16+i;
-	// }
-	data[0] = 0xa5;
-	data[1] = buzzerpingrate;
+	uint8_t *data = new uint8_t[52]();
+
+	PROTOCOL_IMU pld_imu{data, 1, pktcounter++};
+	pld_imu.putADXLData(&adxldata);
+	pld_imu.putLSM6Data(&lsm6data);
+	pld_imu.putLIS3Data(&lis3data);
+	pld_imu.putMTI3Data(&mti3data);
+	pld_imu.finish();
 
 	datcom_payload *pp = new datcom_payload{
-		.len = 50,
+		.len = 52,
 		.pld = data,
 	};
 
 	datcom->putPayload(pp);
-	// gpio_pin_set(gpid, 2, 1);
-	// uart_tx(uart_3, &comdata[0], 43, SYS_FOREVER_US);
 }
 
 void sen_poll_exp(struct k_timer *timer)
 {
 	sensorpoolflag = 1;
 	datcomsendflag = 1;
-	// spisensorpoolflag = 1;
 }
 
 void dat_send_exp(struct k_timer *timer)
@@ -320,24 +340,8 @@ void sensorpool()
 			sensorpoolflag = 0;
 			mti3_get_data();
 			adxl_get_data();
-		}
-		else
-		{
-			k_usleep(100);
-		}
-	}
-}
-
-void datcomsend()
-{
-	while (1)
-	{
-		if (datcomsendflag)
-		{
-			datcomsendflag = 0;
-			buzzerpingrate++;
-			uart_dummy();
-			// printk('ping\n');
+			lsm6_get_data();
+			lis3_get_data();
 		}
 		else
 		{
@@ -350,40 +354,69 @@ K_TIMER_DEFINE(sen_poll_timer, sen_poll_exp, NULL);
 K_TIMER_DEFINE(dat_send_timer, dat_send_exp, NULL);
 K_TIMER_DEFINE(dat_ping_timer, dat_ping_exp, NULL);
 
+void datcomsend()
+{
+	while (1)
+	{
+		if (uartrxflag)
+		{
+			uartrxflag = 0;
+			uart_rx_disable(uart_3);
+
+			if (strcmp((char *)uartrxbuf1, "SHUTDOWN") == 0)
+			{
+				k_timer_stop(&dat_ping_timer);
+				k_timer_stop(&sen_poll_timer);
+				k_timer_stop(&dat_send_timer);
+				printk("Bye!!");
+
+				buzzer_ping(2500);
+				k_sleep(K_MSEC(200));
+				buzzer_ping(1500);
+				k_sleep(K_MSEC(200));
+				buzzer_ping(750);
+
+				gpio_pin_configure(gpib, 14, GPIO_OUTPUT_INACTIVE);
+			}
+
+			memset(uartrxbuf1, 0, sizeof(uartrxbuf1));
+			uart_rx_enable(uart_3, uartrxbuf1, 32, 1000);
+		}
+		if (datcomsendflag)
+		{
+			datcomsendflag = 0;
+			datcom_send();
+		}
+		else
+		{
+			k_usleep(100);
+		}
+	}
+}
+
 void buzzerping()
 {
 	while (1)
 	{
 		if (buzzerpingflag)
 		{
-			buzzerpingflag = 0;
-			uint16_t val = adc_read(adcc1, &sequence);
-			buzzerpingrate = 0;
-			// if(adcbuf < 2400) {
-			// 	buzzerpingrate = 1;
-			// 	k_timer_start(&dat_ping_timer, K_MSEC(507), K_MSEC((uint16_t)buzzerpingrate*100));
-			// } else if (buzzerpingrate != 1) {
-			// 	buzzerpingrate = 1;
-			// 	k_timer_start(&dat_ping_timer, K_MSEC(507), K_MSEC((uint16_t)buzzerpingrate*100)); //20Hz = 50mS
-			// }
 
-			uint8_t *data = new uint8_t[25]();
-			for (uint16_t i = 0; i < 25; i++)
+			buzzerpingflag = 0;
+			buzzer_ping(7500);
+			k_msleep(100);
+			buzzer_ping(0);
+			uint16_t val = adc_read(adcc1, &sequence);
+
+			if (adcbuf < 2400)
 			{
-				data[i] = i;
+				buzzerpingrate = 1;
+			}
+			else if (buzzerpingrate != 10)
+			{
+				buzzerpingrate = 10;
 			}
 
-			datcom_payload *pp = new datcom_payload{
-				.len = 25,
-				.pld = data,
-			};
-
-			datcom->putPayload(pp);
-
-			// printk("PING!!! ADC:%02X %d\n\n", val, adcbuf);
-			pwm_set_cycles(pwm_bz, 1, 20, 0, PWM_POLARITY_NORMAL);
-			k_msleep(50);
-			pwm_set_cycles(pwm_bz, 1, 20, 0, PWM_POLARITY_NORMAL);
+			k_timer_start(&dat_ping_timer, K_SECONDS(buzzerpingrate), K_SECONDS(buzzerpingrate));
 		}
 		else
 		{
@@ -403,7 +436,7 @@ int main()
 	gpio_pin_configure(gpic, 6, GPIO_OUTPUT_INACTIVE);
 	gpio_pin_configure(gpic, 7, GPIO_OUTPUT_INACTIVE);
 	gpio_pin_configure(gpid, 2, GPIO_OUTPUT_INACTIVE);
-	gpio_pin_configure(gpia, 8, GPIO_OUTPUT_INACTIVE);
+	gpio_pin_configure(gpib, 14, GPIO_INPUT);
 	gpio_pin_configure(gpid, 3, GPIO_OUTPUT_INACTIVE);
 	uart_callback_set(uart_3, serial_cb, NULL);
 	adc_channel_setup(adcc1, &adc1c5c);
@@ -413,24 +446,34 @@ int main()
 	lsm6->setup();
 	lis3->setup();
 	ms56->setup();
+	uart_rx_enable(uart_3, uartrxbuf1, 32, 1000);
 
-	pwm_set_cycles(pwm_bz, 1, 100, 50, PWM_POLARITY_NORMAL);
-	k_msleep(200);
-	pwm_set_cycles(pwm_bz, 1, 50, 25, PWM_POLARITY_NORMAL);
-	k_msleep(200);
-	pwm_set_cycles(pwm_bz, 1, 25, 12, PWM_POLARITY_NORMAL);
-	k_msleep(200);
-	pwm_set_cycles(pwm_bz, 1, 20, 0, PWM_POLARITY_NORMAL);
+	buzzer_ping(1000);
+	k_sleep(K_MSEC(200));
+	buzzer_ping(2000);
+	k_sleep(K_MSEC(200));
+	buzzer_ping(4000);
+	k_sleep(K_MSEC(200));
+	buzzer_ping(0);
 
-	k_timer_start(&sen_poll_timer, K_MSEC(500), K_MSEC(10));							 // 100Hz = 10mS
-	k_timer_start(&dat_send_timer, K_MSEC(503), K_MSEC(50));							 // 20Hz = 50mS
-	k_timer_start(&dat_ping_timer, K_MSEC(507), K_MSEC((uint16_t)buzzerpingrate * 100)); // 20Hz = 50mS
+	k_timer_start(&sen_poll_timer, K_MSEC(500), K_MSEC(10));							  // 100Hz = 10mS
+	k_timer_start(&dat_send_timer, K_MSEC(503), K_MSEC(50));							  // 20Hz = 50mS
+	k_timer_start(&dat_ping_timer, K_SECONDS(buzzerpingrate), K_SECONDS(buzzerpingrate)); // 20Hz = 50mS
 
+	uint8_t maincnt = 0;
 	while (1)
 	{
-		gpio_pin_toggle(gpic, 6);
-		gpio_pin_toggle(gpic, 7);
+		if (maincnt++ % 8 == 0)
+		{
+			gpio_pin_set(gpic, 6, 1);
+		}
+		else
+		{
+			gpio_pin_set(gpic, 6, 0);
+		}
+
+		// gpio_pin_toggle(gpic, 7);
 		// gpio_pin_toggle(gpia, 8);
-		k_sleep(K_MSEC(1000));
+		k_sleep(K_MSEC(100));
 	}
 }

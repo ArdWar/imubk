@@ -13,5 +13,6 @@ target_sources(app PRIVATE
 	src/sen_ms56.cpp
 	src/sen_nmea.cpp
 	src/com_uart.cpp
+	src/protocol_mgr.cpp
 	src/util.cpp
 	)
