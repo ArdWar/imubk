@@ -37,7 +37,6 @@ int8_t DATCOM::send()
 	{
 		return -1;
 	}
-
 	_uartTxBusy = 1;
 	return uart_tx(_uart, _pld[_pldTail]->pld, _pld[_pldTail]->len, SYS_FOREVER_US);
 }

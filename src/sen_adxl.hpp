@@ -17,7 +17,7 @@ public:
 
 private:
 	struct device const *_i2c;
-	uint8_t _addr;
+	const uint8_t _addr;
 };
 
 #endif

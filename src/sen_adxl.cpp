@@ -1,9 +1,7 @@
 #include "sen_adxl.hpp"
 
-ADXL::ADXL(struct device const *i2c, uint8_t addr)
+ADXL::ADXL(struct device const *i2c, uint8_t addr) : _i2c(i2c), _addr(addr)
 {
-	_i2c = i2c;
-	_addr = addr;
 }
 
 ADXL::~ADXL()

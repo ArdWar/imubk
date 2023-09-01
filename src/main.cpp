@@ -19,6 +19,7 @@
 #include "protocol_mgr.hpp"
 #include "util.hpp"
 #include "data.hpp"
+#include "minmea.h"
 
 #define STACKSIZE 512
 
@@ -32,9 +33,10 @@ static const struct device *const gpic = DEVICE_DT_GET(DT_NODELABEL(gpioc));
 static const struct device *const gpid = DEVICE_DT_GET(DT_NODELABEL(gpiod));
 static const struct device *const adcc1 = DEVICE_DT_GET(DT_NODELABEL(adc1));
 static const struct device *const pwm_bz = DEVICE_DT_GET(DT_NODELABEL(pwm16));
-static const struct device *const spi1_d = DEVICE_DT_GET(DT_NODELABEL(spi1));
-static const struct device *const i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c2));
-static const struct device *const uart_3 = DEVICE_DT_GET(DT_NODELABEL(usart3));
+static const struct device *const spi_sen = DEVICE_DT_GET(DT_NODELABEL(spi1));
+static const struct device *const i2c_sen = DEVICE_DT_GET(DT_NODELABEL(i2c2));
+static const struct device *const uart_com = DEVICE_DT_GET(DT_NODELABEL(usart3));
+static const struct device *const uart_gps = DEVICE_DT_GET(DT_NODELABEL(usart1));
 
 static struct adc_channel_cfg adc1c5c = ADC_CHANNEL_CFG_DT(DT_CHILD(DT_NODELABEL(adc1), channel_5));
 
@@ -42,20 +44,21 @@ RING_BUF_DECLARE(adxl_ring_buf, sizeof(ADXLRawData) * 2);
 RING_BUF_DECLARE(lsm6_ring_buf, sizeof(LSM6RawData) * 2);
 RING_BUF_DECLARE(lis3_ring_buf, sizeof(LIS3RawData) * 2);
 RING_BUF_DECLARE(mti3_ring_buf, sizeof(MTI3RawData) * 2);
-RING_BUF_DECLARE(ms56_ring_buf, sizeof(MS56RawData) * 2);
+MS56RawData ms56_buf;
+NMEARawData nmea_buf;
 
-struct spi_config spi1_cfg = {
+struct spi_config spi_sen_cfg = {
 	.frequency = 1000000U,
 	.operation = SPI_OP_MODE_MASTER | SPI_MODE_CPOL | SPI_MODE_CPHA | SPI_WORD_SET(8) | SPI_TRANSFER_MSB,
 };
 
-MTI3 *mti3 = new MTI3(spi1_d, spi1_cfg);
-ADXL *adxl = new ADXL(i2c_dev, ADXL_ADDR);
-LSM6 *lsm6 = new LSM6(i2c_dev, LSM6_ADDR);
-LIS3 *lis3 = new LIS3(i2c_dev, LIS3_ADDR);
-MS56 *ms56 = new MS56(i2c_dev, MS56_ADDR);
+MTI3 *mti3 = new MTI3(spi_sen, spi_sen_cfg);
+ADXL *adxl = new ADXL(i2c_sen, ADXL_ADDR);
+LSM6 *lsm6 = new LSM6(i2c_sen, LSM6_ADDR);
+LIS3 *lis3 = new LIS3(i2c_sen, LIS3_ADDR);
+MS56 *ms56 = new MS56(i2c_sen, MS56_ADDR);
 
-DATCOM *datcom = new DATCOM(uart_3);
+DATCOM *datcom = new DATCOM(uart_com);
 
 uint16_t adcbuf;
 struct adc_sequence sequence = {
@@ -66,16 +69,19 @@ struct adc_sequence sequence = {
 };
 
 uint32_t i2c_cfg = I2C_SPEED_SET(I2C_SPEED_FAST) | I2C_MODE_CONTROLLER;
-uint8_t sensorpoolflag = 0;
 uint8_t pktcounter = 0;
-uint8_t datcomsendflag = 0;
-uint8_t buzzerpingflag = 0;
-uint8_t uartrxflag = 0;
-uint8_t buzzerpingrate = 1;
-uint8_t buzzerpinging = 0;
-uint8_t uartrxbuf1[32];
-uint8_t uartrxbuf2[32];
-uart_event_rx rxevt;
+uint8_t sen_ping_flag = 0;
+uint8_t com_send_imu_flag = 0;
+uint8_t com_send_gps_flag = 0;
+uint8_t ctx_finish_flag = 0;
+uint8_t buz_ping_flag = 0;
+uint8_t uart_com_flag = 0;
+uint8_t uart_gps_flag = 0;
+uint8_t rate_buz = 1;
+uint8_t uart_com_buf[32];
+uint8_t uart_gps_buf[128];
+uart_event_rx com_uart_evt;
+uart_event_rx gps_uart_evt;
 
 void buzzer_ping(int16_t freq)
 {
@@ -90,18 +96,18 @@ void buzzer_ping(int16_t freq)
 	}
 }
 
-void serial_cb(const struct device *dev, struct uart_event *evt, void *user_data)
+void com_uart_cb(const struct device *dev, struct uart_event *evt, void *user_data)
 {
 	switch (evt->type)
 	{
 	case UART_TX_DONE:
-		datcom->txFinish();
+		ctx_finish_flag = 1;
 		break;
 	case UART_TX_ABORTED:
 		break;
 	case UART_RX_RDY:
-		rxevt = evt->data.rx;
-		uartrxflag = 1;
+		com_uart_evt = evt->data.rx;
+		uart_com_flag = 1;
 		break;
 	case UART_RX_BUF_REQUEST:
 		// nop
@@ -111,6 +117,19 @@ void serial_cb(const struct device *dev, struct uart_event *evt, void *user_data
 	case UART_RX_DISABLED:
 		break;
 	case UART_RX_STOPPED:
+		break;
+	default:
+		break;
+	}
+}
+
+void gps_uart_cb(const struct device *dev, struct uart_event *evt, void *user_data)
+{
+	switch (evt->type)
+	{
+	case UART_RX_RDY:
+		gps_uart_evt = evt->data.rx;
+		uart_gps_flag = 1;
 		break;
 	default:
 		break;
@@ -151,12 +170,10 @@ void lis3_get_data()
 	}
 }
 
-void ms5611_get_data()
+void ms56_get_data()
 {
-	uint8_t cnt = sizeof(MS56RawData) * 2;
-	uint8_t ms56data[cnt];
-	lis3->getMeasurement(ms56data, &cnt);
-	ring_buf_put(&lis3_ring_buf, ms56data, sizeof(MS56RawData));
+	uint8_t cnt = 1;
+	ms56->getMeasurement((uint8_t *)&ms56_buf, &cnt);
 }
 
 uint32_t mti3_parse_32b(uint8_t *data)
@@ -227,6 +244,9 @@ int8_t mti3_parse_measdata(uint8_t *measData, uint8_t len, MTI3RawData *data)
 		case XDI_PACKETCOUNTER:
 			data->counter = mti3_parse_32b(&measData[idx + 3]);
 			break;
+		case XDI_TEMPERATURE:
+			ms56_buf.temp2 = ((mti3_parse_32b(&measData[idx + 3]) >> 8) * 100) >> 12;
+			break;
 		default:
 			break;
 		}
@@ -244,7 +264,7 @@ void mti3_get_data()
 	if (measCnt)
 	{
 		uint8_t measData[measCnt + 4];
-		int8_t r = mti3->getMeasurement(measData, measCnt);
+		mti3->getMeasurement(measData, measCnt);
 		MTI3RawData data;
 		mti3_parse_measdata(&measData[4], measCnt, &data);
 		ring_buf_put(&mti3_ring_buf, (uint8_t *)&data, sizeof(MTI3RawData));
@@ -254,7 +274,7 @@ void mti3_get_data()
 	if (measCnt)
 	{
 		uint8_t measData[measCnt + 4];
-		int8_t r = mti3->getMeasurement(measData, measCnt);
+		mti3->getMeasurement(measData, measCnt);
 		MTI3RawData data;
 		mti3_parse_measdata(&measData[4], measCnt, &data);
 		ring_buf_put(&mti3_ring_buf, (uint8_t *)&data, sizeof(MTI3RawData));
@@ -262,7 +282,7 @@ void mti3_get_data()
 	if (notifCnt)
 	{
 		uint8_t notifData[notifCnt + 4];
-		int8_t r = mti3->getNotification(notifData, notifCnt);
+		mti3->getNotification(notifData, notifCnt);
 	}
 }
 
@@ -275,7 +295,7 @@ int8_t mti3_get_msg()
 	if (notifCnt)
 	{
 		uint8_t notifData[notifCnt + 4];
-		int8_t r = mti3->getNotification(notifData, notifCnt);
+		mti3->getNotification(notifData, notifCnt);
 	}
 	return notifCnt;
 }
@@ -286,7 +306,7 @@ void mti3_setup()
 	mti3->setConfig(goMeas, 2);
 }
 
-void datcom_send()
+void com_send_imu()
 {
 	ADXLRawData adxldata;
 	LSM6RawData lsm6data;
@@ -296,8 +316,6 @@ void datcom_send()
 	ring_buf_get(&lsm6_ring_buf, (uint8_t *)&lsm6data, sizeof(LSM6RawData));
 	ring_buf_get(&lis3_ring_buf, (uint8_t *)&lis3data, sizeof(LIS3RawData));
 	ring_buf_get(&mti3_ring_buf, (uint8_t *)&mti3data, sizeof(MTI3RawData));
-
-	// printk("A % 6d % 6d % 6d\n", mtidata.accX, mtidata.accY, mtidata.accZ);
 
 	uint8_t *data = new uint8_t[52]();
 
@@ -316,59 +334,117 @@ void datcom_send()
 	datcom->putPayload(pp);
 }
 
-void sen_poll_exp(struct k_timer *timer)
+void com_send_gps()
 {
-	sensorpoolflag = 1;
-	datcomsendflag = 1;
+	uint8_t *data = new uint8_t[24]();
+
+	printk("G %d %d %d %d %d\n", nmea_buf.lat / 60, nmea_buf.lon / 60, ms56_buf.pres << 1, ms56_buf.temp1, ms56_buf.temp2);
+	PROTOCOL_GPS pld_gps{data, 2, pktcounter++};
+	pld_gps.putNMEAData(&nmea_buf);
+	pld_gps.putMS56Data(&ms56_buf);
+	pld_gps.finish();
+
+	datcom_payload *pp = new datcom_payload{
+		.len = 24,
+		.pld = data,
+	};
+
+	datcom->putPayload(pp);
 }
 
-void dat_send_exp(struct k_timer *timer)
+void sen_poll_exp(struct k_timer *timer)
 {
+	sen_ping_flag = 1;
+	com_send_imu_flag = 1;
+}
+
+void gps_poll_exp(struct k_timer *timer)
+{
+	com_send_gps_flag = 1;
 }
 
 void dat_ping_exp(struct k_timer *timer)
 {
-	buzzerpingflag = 1;
+	buz_ping_flag = 1;
 }
 
-void sensorpool()
+void loop_sen()
 {
 	while (1)
 	{
-		if (sensorpoolflag)
+		if (sen_ping_flag)
 		{
-			sensorpoolflag = 0;
+			sen_ping_flag = 0;
 			mti3_get_data();
 			adxl_get_data();
 			lsm6_get_data();
 			lis3_get_data();
+			ms56_get_data();
 		}
-		else
-		{
-			k_usleep(100);
-		}
+
+		k_usleep(100);
 	}
 }
 
-K_TIMER_DEFINE(sen_poll_timer, sen_poll_exp, NULL);
-K_TIMER_DEFINE(dat_send_timer, dat_send_exp, NULL);
-K_TIMER_DEFINE(dat_ping_timer, dat_ping_exp, NULL);
+K_TIMER_DEFINE(timer_sen, sen_poll_exp, NULL);
+K_TIMER_DEFINE(timer_gps, gps_poll_exp, NULL);
+K_TIMER_DEFINE(timer_buz, dat_ping_exp, NULL);
 
-void datcomsend()
+void loop_gps()
 {
 	while (1)
 	{
-		if (uartrxflag)
+		if (uart_gps_flag)
 		{
-			uartrxflag = 0;
-			uart_rx_disable(uart_3);
-
-			if (strcmp((char *)uartrxbuf1, "SHUTDOWN") == 0)
+			uart_gps_flag = 0;
+			uart_rx_disable(uart_gps);
+			switch (minmea_sentence_id((char *)uart_gps_buf, false))
 			{
-				k_timer_stop(&dat_ping_timer);
-				k_timer_stop(&sen_poll_timer);
-				k_timer_stop(&dat_send_timer);
-				printk("Bye!!");
+			case MINMEA_SENTENCE_GGA:
+				struct minmea_sentence_gga framegga;
+				if (minmea_parse_gga(&framegga, (char *)uart_gps_buf))
+				{
+					nmea_buf.lat = (framegga.latitude.value / (framegga.latitude.scale * 100)) * 6000000 + (framegga.latitude.value % (framegga.latitude.scale * 100) * (100000 / framegga.latitude.scale));
+					nmea_buf.lon = (framegga.longitude.value / (framegga.longitude.scale * 100)) * 6000000 + (framegga.longitude.value % (framegga.longitude.scale * 100) * (100000 / framegga.latitude.scale));
+					nmea_buf.alt = framegga.altitude.value / framegga.altitude.scale;
+					nmea_buf.tim = framegga.time.seconds + framegga.time.minutes * 60 + framegga.time.hours * 3600;
+				}
+				break;
+			case MINMEA_SENTENCE_VTG:
+				struct minmea_sentence_vtg framevtg;
+				if (minmea_parse_vtg(&framevtg, (char *)uart_gps_buf))
+				{
+					nmea_buf.vel = framevtg.speed_kph.value * 2 / framevtg.speed_kph.scale;
+					nmea_buf.hdg = framevtg.true_track_degrees.value * 64 / framevtg.true_track_degrees.scale;
+				}
+				break;
+			default:
+				break;
+			}
+			memset(uart_gps_buf, 0, sizeof(uart_gps_buf));
+			uart_rx_enable(uart_gps, uart_gps_buf, 128, 1000);
+		}
+
+		k_usleep(100);
+	}
+}
+
+uint8_t gps_com_cnt = 0;
+
+void loop_com_imu()
+{
+	while (1)
+	{
+		if (uart_com_flag)
+		{
+			uart_com_flag = 0;
+			uart_rx_disable(uart_com);
+
+			if (strcmp((char *)uart_com_buf, "SHUTDOWN") == 0)
+			{
+				k_timer_stop(&timer_buz);
+				k_timer_stop(&timer_sen);
+				k_timer_stop(&timer_gps);
 
 				buzzer_ping(2500);
 				k_sleep(K_MSEC(200));
@@ -379,44 +455,63 @@ void datcomsend()
 				gpio_pin_configure(gpib, 14, GPIO_OUTPUT_INACTIVE);
 			}
 
-			memset(uartrxbuf1, 0, sizeof(uartrxbuf1));
-			uart_rx_enable(uart_3, uartrxbuf1, 32, 1000);
+			memset(uart_com_buf, 0, sizeof(uart_com_buf));
+			uart_rx_enable(uart_com, uart_com_buf, 32, 1000);
 		}
-		if (datcomsendflag)
+
+		if (com_send_imu_flag)
 		{
-			datcomsendflag = 0;
-			datcom_send();
+			com_send_imu_flag = 0;
+			com_send_imu();
 		}
-		else
+
+		if (ctx_finish_flag)
 		{
-			k_usleep(100);
+			ctx_finish_flag = 0;
+			datcom->txFinish();
 		}
+
+		k_usleep(100);
 	}
 }
 
-void buzzerping()
+void loop_com_gps()
 {
 	while (1)
 	{
-		if (buzzerpingflag)
+		if (com_send_gps_flag)
+		{
+			com_send_gps_flag = 0;
+			com_send_gps();
+		}
+
+		k_usleep(100);
+	}
+}
+
+void loop_buz()
+{
+	while (1)
+	{
+		if (buz_ping_flag)
 		{
 
-			buzzerpingflag = 0;
+			buz_ping_flag = 0;
 			buzzer_ping(7500);
 			k_msleep(100);
 			buzzer_ping(0);
-			uint16_t val = adc_read(adcc1, &sequence);
+			adc_read(adcc1, &sequence);
 
 			if (adcbuf < 2400)
 			{
-				buzzerpingrate = 1;
+				rate_buz = 1;
 			}
-			else if (buzzerpingrate != 10)
+			else if (rate_buz != 10)
 			{
-				buzzerpingrate = 10;
+				rate_buz = 10;
 			}
 
-			k_timer_start(&dat_ping_timer, K_SECONDS(buzzerpingrate), K_SECONDS(buzzerpingrate));
+			k_timer_start(&timer_buz, K_SECONDS(rate_buz), K_SECONDS(rate_buz));
 		}
 		else
 		{
@@ -425,20 +520,22 @@ void buzzerping()
 	}
 }
 
-K_THREAD_DEFINE(sensorthread, STACKSIZE, sensorpool, NULL, NULL, NULL, 5, 0, 0);
-K_THREAD_DEFINE(datcomthread, STACKSIZE, datcomsend, NULL, NULL, NULL, 4, 0, 0);
-K_THREAD_DEFINE(buzzerthread, STACKSIZE, buzzerping, NULL, NULL, NULL, 3, 0, 0);
+K_THREAD_DEFINE(thread_sen, STACKSIZE, loop_sen, NULL, NULL, NULL, 6, 0, 0);
+K_THREAD_DEFINE(thread_gps, STACKSIZE, loop_gps, NULL, NULL, NULL, 5, 0, 0);
+K_THREAD_DEFINE(thread_com_imu, STACKSIZE, loop_com_imu, NULL, NULL, NULL, 4, 0, 0);
+K_THREAD_DEFINE(thread_com_gps, STACKSIZE, loop_com_gps, NULL, NULL, NULL, 3, 0, 0);
+K_THREAD_DEFINE(thread_buz, STACKSIZE, loop_buz, NULL, NULL, NULL, 2, 0, 0);
 
 int main()
 {
-	printk("\n\n\n\nHello!\n\n");
-	i2c_configure(i2c_dev, i2c_cfg);
-	gpio_pin_configure(gpic, 6, GPIO_OUTPUT_INACTIVE);
-	gpio_pin_configure(gpic, 7, GPIO_OUTPUT_INACTIVE);
+	gpio_pin_configure(gpic, 6, GPIO_OUTPUT_INACTIVE); // LED
+	gpio_pin_configure(gpic, 7, GPIO_OUTPUT_INACTIVE); // LED
 	gpio_pin_configure(gpid, 2, GPIO_OUTPUT_INACTIVE);
 	gpio_pin_configure(gpib, 14, GPIO_INPUT);
 	gpio_pin_configure(gpid, 3, GPIO_OUTPUT_INACTIVE);
-	uart_callback_set(uart_3, serial_cb, NULL);
+	i2c_configure(i2c_sen, i2c_cfg);
+	uart_callback_set(uart_com, com_uart_cb, NULL);
+	uart_callback_set(uart_gps, gps_uart_cb, NULL);
 	adc_channel_setup(adcc1, &adc1c5c);
 
 	mti3_setup();
@@ -446,7 +543,8 @@ int main()
 	lsm6->setup();
 	lis3->setup();
 	ms56->setup();
-	uart_rx_enable(uart_3, uartrxbuf1, 32, 1000);
+	uart_rx_enable(uart_com, uart_com_buf, 32, 1000);
+	uart_rx_enable(uart_gps, uart_gps_buf, 128, 1000);
 
 	buzzer_ping(1000);
 	k_sleep(K_MSEC(200));
@@ -456,9 +554,9 @@ int main()
 	k_sleep(K_MSEC(200));
 	buzzer_ping(0);
 
-	k_timer_start(&sen_poll_timer, K_MSEC(500), K_MSEC(10));							  // 100Hz = 10mS
-	k_timer_start(&dat_send_timer, K_MSEC(503), K_MSEC(50));							  // 20Hz = 50mS
-	k_timer_start(&dat_ping_timer, K_SECONDS(buzzerpingrate), K_SECONDS(buzzerpingrate)); // 20Hz = 50mS
+	k_timer_start(&timer_sen, K_MSEC(500), K_MSEC(10));					 // 100Hz = 10mS
+	k_timer_start(&timer_gps, K_MSEC(503), K_MSEC(100));				 // 20Hz = 50mS
+	k_timer_start(&timer_buz, K_SECONDS(rate_buz), K_SECONDS(rate_buz)); // 20Hz = 50mS
 
 	uint8_t maincnt = 0;
 	while (1)

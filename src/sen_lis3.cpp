@@ -1,9 +1,7 @@
 #include "sen_lis3.hpp"
 
-LIS3::LIS3(struct device const *i2c, uint8_t addr)
+LIS3::LIS3(struct device const *i2c, uint8_t addr) : _i2c(i2c), _addr(addr)
 {
-	_i2c = i2c;
-	_addr = addr;
 }
 
 LIS3::~LIS3()

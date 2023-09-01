@@ -1,9 +1,7 @@
 #include "sen_lsm6.hpp"
 
-LSM6::LSM6(struct device const *i2c, uint8_t addr)
+LSM6::LSM6(struct device const *i2c, uint8_t addr) : _i2c(i2c), _addr(addr)
 {
-	_i2c = i2c;
-	_addr = addr;
 }
 
 LSM6::~LSM6()

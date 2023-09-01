@@ -54,14 +54,15 @@ typedef struct LIS3RawData
 
 typedef struct MS56RawData
 {
-	int16_t pres;
-	int16_t temp;
+	uint16_t pres;
+	int16_t temp1;
+	int16_t temp2;
 } MS56RawData;
 
 typedef struct NMEARawData
 {
-	uint16_t lat;
-	uint16_t lon;
+	int32_t lat;
+	int32_t lon;
 	uint16_t alt;
 	uint16_t vel;
 	uint16_t hdg;

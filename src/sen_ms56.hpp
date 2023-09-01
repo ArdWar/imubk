@@ -6,6 +6,9 @@
 #include <zephyr/drivers/i2c.h>
 #include "util.hpp"
 
+#define MS56_CONV_PRES	0x48
+#define MS56_CONV_TEMP	0x58
+
 class MS56
 {
 public:
@@ -16,15 +19,14 @@ public:
 	int8_t getMeasurement(uint8_t *data, uint8_t *cnt);
 
 private:
+	const uint8_t _addr;
+	struct device const *_i2c;
 	uint16_t promcvt(uint8_t *data);
 	uint32_t adccvt(uint8_t *data);
-	struct device const *_i2c;
-	uint8_t _addr;
 
 	uint8_t _cmd = 0x48;
-	// uint8_t _d1[3] = {0};
-	// uint8_t _d2[3] = {0};
-	uint16_t _const[6] = {0};
+	uint8_t _n = 0;
+	uint16_t _const[7] = {0};
 	int64_t _temp;
 	int64_t _pres;
 	int64_t _dT;
