@@ -24,8 +24,8 @@ typedef struct MTI3RawData
 	int32_t dqB;
 	int32_t dqC;
 	int32_t dqD;
-	int32_t sTime;
-	int32_t counter;
+	uint32_t sTime;
+	uint32_t counter;
 } MTI3RawData;
 
 typedef struct ADXLRawData

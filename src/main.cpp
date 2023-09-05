@@ -70,7 +70,8 @@ struct adc_sequence sequence = {
 
 uint32_t i2c_cfg = I2C_SPEED_SET(I2C_SPEED_FAST) | I2C_MODE_CONTROLLER;
 uint8_t pktcounter = 0;
-uint8_t sen_ping_flag = 0;
+uint8_t sen_i2c_flag = 0;
+uint8_t sen_spi_flag = 0;
 uint8_t com_send_imu_flag = 0;
 uint8_t com_send_gps_flag = 0;
 uint8_t ctx_finish_flag = 0;
@@ -308,10 +309,10 @@ void mti3_setup()
 
 void com_send_imu()
 {
-	ADXLRawData adxldata;
-	LSM6RawData lsm6data;
-	LIS3RawData lis3data;
-	MTI3RawData mti3data;
+	ADXLRawData adxldata = {0};
+	LSM6RawData lsm6data = {0};
+	LIS3RawData lis3data = {0};
+	MTI3RawData mti3data = {0};
 	ring_buf_get(&adxl_ring_buf, (uint8_t *)&adxldata, sizeof(ADXLRawData));
 	ring_buf_get(&lsm6_ring_buf, (uint8_t *)&lsm6data, sizeof(LSM6RawData));
 	ring_buf_get(&lis3_ring_buf, (uint8_t *)&lis3data, sizeof(LIS3RawData));
@@ -338,7 +339,6 @@ void com_send_gps()
 {
 	uint8_t *data = new uint8_t[24]();
 
-	printk("G %d %d %d %d %d\n", nmea_buf.lat / 60, nmea_buf.lon / 60, ms56_buf.pres << 1, ms56_buf.temp1, ms56_buf.temp2);
 	PROTOCOL_GPS pld_gps{data, 2, pktcounter++};
 	pld_gps.putNMEAData(&nmea_buf);
 	pld_gps.putMS56Data(&ms56_buf);
@@ -354,7 +354,8 @@ void com_send_gps()
 
 void sen_poll_exp(struct k_timer *timer)
 {
-	sen_ping_flag = 1;
+	sen_i2c_flag = 1;
+	sen_spi_flag = 1;
 	com_send_imu_flag = 1;
 }
 
@@ -368,21 +369,34 @@ void dat_ping_exp(struct k_timer *timer)
 	buz_ping_flag = 1;
 }
 
-void loop_sen()
+void loop_sen_i2c()
 {
 	while (1)
 	{
-		if (sen_ping_flag)
+		if (sen_i2c_flag)
 		{
-			sen_ping_flag = 0;
-			mti3_get_data();
+			sen_i2c_flag = 0;
 			adxl_get_data();
 			lsm6_get_data();
 			lis3_get_data();
 			ms56_get_data();
 		}
 
-		k_usleep(100);
+		k_usleep(10);
+	}
+}
+
+void loop_sen_spi()
+{
+	while (1)
+	{
+		if (sen_spi_flag)
+		{
+			sen_spi_flag = 0;
+			mti3_get_data();
+		}
+
+		k_usleep(10);
 	}
 }
 
@@ -425,7 +439,7 @@ void loop_gps()
 			uart_rx_enable(uart_gps, uart_gps_buf, 128, 1000);
 		}
 
-		k_usleep(100);
+		k_usleep(10);
 	}
 }
 
@@ -471,7 +485,7 @@ void loop_com_imu()
 			datcom->txFinish();
 		}
 
-		k_usleep(100);
+		k_usleep(10);
 	}
 }
 
@@ -485,7 +499,7 @@ void loop_com_gps()
 			com_send_gps();
 		}
 
-		k_usleep(100);
+		k_usleep(10);
 	}
 }
 
@@ -515,16 +529,17 @@ void loop_buz()
 		}
 		else
 		{
-			k_usleep(100);
+			k_usleep(10);
 		}
 	}
 }
 
-K_THREAD_DEFINE(thread_sen, STACKSIZE, loop_sen, NULL, NULL, NULL, 6, 0, 0);
-K_THREAD_DEFINE(thread_gps, STACKSIZE, loop_gps, NULL, NULL, NULL, 5, 0, 0);
+K_THREAD_DEFINE(thread_sen_spi, STACKSIZE, loop_sen_spi, NULL, NULL, NULL, 1, 0, 0);
+K_THREAD_DEFINE(thread_sen_i2c, STACKSIZE, loop_sen_i2c, NULL, NULL, NULL, 2, 0, 0);
+K_THREAD_DEFINE(thread_gps, STACKSIZE, loop_gps, NULL, NULL, NULL, 3, 0, 0);
 K_THREAD_DEFINE(thread_com_imu, STACKSIZE, loop_com_imu, NULL, NULL, NULL, 4, 0, 0);
-K_THREAD_DEFINE(thread_com_gps, STACKSIZE, loop_com_gps, NULL, NULL, NULL, 3, 0, 0);
-K_THREAD_DEFINE(thread_buz, STACKSIZE, loop_buz, NULL, NULL, NULL, 2, 0, 0);
+K_THREAD_DEFINE(thread_com_gps, STACKSIZE, loop_com_gps, NULL, NULL, NULL, 5, 0, 0);
+K_THREAD_DEFINE(thread_buz, STACKSIZE, loop_buz, NULL, NULL, NULL, 99, 0, 0);
 
 int main()
 {
@@ -533,9 +548,12 @@ int main()
 	gpio_pin_configure(gpid, 2, GPIO_OUTPUT_INACTIVE);
 	gpio_pin_configure(gpib, 14, GPIO_INPUT);
 	gpio_pin_configure(gpid, 3, GPIO_OUTPUT_INACTIVE);
+
 	i2c_configure(i2c_sen, i2c_cfg);
+
 	uart_callback_set(uart_com, com_uart_cb, NULL);
 	uart_callback_set(uart_gps, gps_uart_cb, NULL);
+
 	adc_channel_setup(adcc1, &adc1c5c);
 
 	mti3_setup();
@@ -543,6 +561,7 @@ int main()
 	lsm6->setup();
 	lis3->setup();
 	ms56->setup();
+
 	uart_rx_enable(uart_com, uart_com_buf, 32, 1000);
 	uart_rx_enable(uart_gps, uart_gps_buf, 128, 1000);
 
@@ -570,8 +589,6 @@ int main()
 			gpio_pin_set(gpic, 6, 0);
 		}
 
-		// gpio_pin_toggle(gpic, 7);
-		// gpio_pin_toggle(gpia, 8);
 		k_sleep(K_MSEC(100));
 	}
 }
