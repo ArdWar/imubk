@@ -28,6 +28,10 @@
 #define LIS3_ADDR 0x1E
 #define MS56_ADDR 0x77
 
+#ifndef ARCH_STACK_PTR_ALIGN
+#define ARCH_STACK_PTR_ALIGN 8
+#endif
+
 static const struct device *const gpib		= DEVICE_DT_GET(DT_NODELABEL(gpiob));
 static const struct device *const gpic		= DEVICE_DT_GET(DT_NODELABEL(gpioc));
 static const struct device *const gpid		= DEVICE_DT_GET(DT_NODELABEL(gpiod));
@@ -40,6 +44,7 @@ static const struct device *const uart_gps	= DEVICE_DT_GET(DT_NODELABEL(usart1))
 
 static struct adc_channel_cfg adc1c5c = ADC_CHANNEL_CFG_DT(DT_CHILD(DT_NODELABEL(adc1), channel_5));
 
+// Sensors are ring-buffered, except GPS and MS5611 since they works in round robin
 RING_BUF_DECLARE(adxl_ring_buf, sizeof(ADXLRawData) * 2);
 RING_BUF_DECLARE(lsm6_ring_buf, sizeof(LSM6RawData) * 2);
 RING_BUF_DECLARE(lis3_ring_buf, sizeof(LIS3RawData) * 2);
@@ -52,6 +57,16 @@ struct spi_config spi_sen_cfg = {
 	.operation = SPI_OP_MODE_MASTER | SPI_MODE_CPOL | SPI_MODE_CPHA | SPI_WORD_SET(8) | SPI_TRANSFER_MSB,
 };
 
+uint32_t i2c_sen_cfg = I2C_SPEED_SET(I2C_SPEED_FAST) | I2C_MODE_CONTROLLER;
+
+uint16_t adcbuf;
+struct adc_sequence adc_sen_seq = {
+	.channels = 0b0000000000100000,
+	.buffer = &adcbuf,
+	.buffer_size = sizeof(adcbuf),
+	.resolution = 12,
+};
+
 MTI3 *mti3 = new MTI3(spi_sen, spi_sen_cfg);
 ADXL *adxl = new ADXL(i2c_sen, ADXL_ADDR);
 LSM6 *lsm6 = new LSM6(i2c_sen, LSM6_ADDR);
@@ -60,16 +75,7 @@ MS56 *ms56 = new MS56(i2c_sen, MS56_ADDR);
 
 DATCOM *datcom = new DATCOM(uart_com);
 
-uint16_t adcbuf;
-struct adc_sequence sequence = {
-	.channels = 0b0000000000100000,
-	.buffer = &adcbuf,
-	.buffer_size = sizeof(adcbuf),
-	.resolution = 12,
-};
-
-uint32_t i2c_cfg = I2C_SPEED_SET(I2C_SPEED_FAST) | I2C_MODE_CONTROLLER;
-uint8_t pktcounter = 0;
+// Should use semaphore instead of flags, but whatever
 uint8_t sen_i2c_flag = 0;
 uint8_t sen_spi_flag = 0;
 uint8_t com_send_imu_flag = 0;
@@ -78,11 +84,22 @@ uint8_t ctx_finish_flag = 0;
 uint8_t buz_ping_flag = 0;
 uint8_t uart_com_flag = 0;
 uint8_t uart_gps_flag = 0;
+
+uint8_t pktcounter = 0;
 uint8_t rate_buz = 1;
 uint8_t uart_com_buf[32];
 uint8_t uart_gps_buf[128];
+
 uart_event_rx com_uart_evt;
 uart_event_rx gps_uart_evt;
+
+///////////////////////////////////////////////////////////////////////////////
+//	PREDECLARATIONS
+///////////////////////////////////////////////////////////////////////////////
+
+void sen_poll_exp(struct k_timer *timer);
+void gps_poll_exp(struct k_timer *timer);
+void dat_ping_exp(struct k_timer *timer);
 
 void buzzer_ping(int16_t freq)
 {
@@ -97,6 +114,10 @@ void buzzer_ping(int16_t freq)
 	}
 }
 
+///////////////////////////////////////////////////////////////////////////////
+//	SERIAL INTERRUPT CALLBACK
+///////////////////////////////////////////////////////////////////////////////
+
 void com_uart_cb(const struct device *dev, struct uart_event *evt, void *user_data)
 {
 	switch (evt->type)
@@ -105,19 +126,11 @@ void com_uart_cb(const struct device *dev, struct uart_event *evt, void *user_da
 		ctx_finish_flag = 1;
 		break;
 	case UART_TX_ABORTED:
+		// should do something here really...
 		break;
 	case UART_RX_RDY:
 		com_uart_evt = evt->data.rx;
 		uart_com_flag = 1;
-		break;
-	case UART_RX_BUF_REQUEST:
-		// nop
-		break;
-	case UART_RX_BUF_RELEASED:
-		break;
-	case UART_RX_DISABLED:
-		break;
-	case UART_RX_STOPPED:
 		break;
 	default:
 		break;
@@ -136,6 +149,10 @@ void gps_uart_cb(const struct device *dev, struct uart_event *evt, void *user_da
 		break;
 	}
 }
+
+///////////////////////////////////////////////////////////////////////////////
+//	DATA ACQUISITION
+///////////////////////////////////////////////////////////////////////////////
 
 void adxl_get_data()
 {
@@ -307,6 +324,10 @@ void mti3_setup()
 	mti3->setConfig(goMeas, 2);
 }
 
+///////////////////////////////////////////////////////////////////////////////
+//	DATCOM PACKET HANDLER
+///////////////////////////////////////////////////////////////////////////////
+
 void com_send_imu()
 {
 	ADXLRawData adxldata = {0};
@@ -352,6 +373,10 @@ void com_send_gps()
 	datcom->putPayload(pp);
 }
 
+///////////////////////////////////////////////////////////////////////////////
+//	EVENT GENERATORS
+///////////////////////////////////////////////////////////////////////////////
+
 void sen_poll_exp(struct k_timer *timer)
 {
 	sen_i2c_flag = 1;
@@ -368,6 +393,10 @@ void dat_ping_exp(struct k_timer *timer)
 {
 	buz_ping_flag = 1;
 }
+
+///////////////////////////////////////////////////////////////////////////////
+//	THREAD LOOPS
+///////////////////////////////////////////////////////////////////////////////
 
 void loop_sen_i2c()
 {
@@ -400,10 +429,6 @@ void loop_sen_spi()
 	}
 }
 
-K_TIMER_DEFINE(timer_sen, sen_poll_exp, NULL);
-K_TIMER_DEFINE(timer_gps, gps_poll_exp, NULL);
-K_TIMER_DEFINE(timer_buz, dat_ping_exp, NULL);
-
 void loop_gps()
 {
 	while (1)
@@ -412,24 +437,24 @@ void loop_gps()
 		{
 			uart_gps_flag = 0;
 			uart_rx_disable(uart_gps);
-			switch (minmea_sentence_id((char *)uart_gps_buf, false))
+			switch (minmea_sentence_id((char *)gps_uart_evt.buf, false))
 			{
 			case MINMEA_SENTENCE_GGA:
-				struct minmea_sentence_gga framegga;
-				if (minmea_parse_gga(&framegga, (char *)uart_gps_buf))
+				struct minmea_sentence_gga f_gga;
+				if (minmea_parse_gga(&f_gga, (char *)gps_uart_evt.buf))
 				{
-					nmea_buf.lat = (framegga.latitude.value / (framegga.latitude.scale * 100)) * 6000000 + (framegga.latitude.value % (framegga.latitude.scale * 100) * (100000 / framegga.latitude.scale));
-					nmea_buf.lon = (framegga.longitude.value / (framegga.longitude.scale * 100)) * 6000000 + (framegga.longitude.value % (framegga.longitude.scale * 100) * (100000 / framegga.latitude.scale));
-					nmea_buf.alt = framegga.altitude.value / framegga.altitude.scale;
-					nmea_buf.tim = framegga.time.seconds + framegga.time.minutes * 60 + framegga.time.hours * 3600;
+					nmea_buf.lat = (f_gga.latitude.value / (f_gga.latitude.scale * 100)) * 6000000 + (f_gga.latitude.value % (f_gga.latitude.scale * 100) * (100000 / f_gga.latitude.scale));
+					nmea_buf.lon = (f_gga.longitude.value / (f_gga.longitude.scale * 100)) * 6000000 + (f_gga.longitude.value % (f_gga.longitude.scale * 100) * (100000 / f_gga.latitude.scale));
+					nmea_buf.alt = f_gga.altitude.value / f_gga.altitude.scale;
+					nmea_buf.tim = f_gga.time.seconds + f_gga.time.minutes * 60 + f_gga.time.hours * 3600;
 				}
 				break;
 			case MINMEA_SENTENCE_VTG:
-				struct minmea_sentence_vtg framevtg;
-				if (minmea_parse_vtg(&framevtg, (char *)uart_gps_buf))
+				struct minmea_sentence_vtg f_vtg;
+				if (minmea_parse_vtg(&f_vtg, (char *)gps_uart_evt.buf))
 				{
-					nmea_buf.vel = framevtg.speed_kph.value * 2 / framevtg.speed_kph.scale;
-					nmea_buf.hdg = framevtg.true_track_degrees.value * 64 / framevtg.true_track_degrees.scale;
+					nmea_buf.vel = f_vtg.speed_kph.value * 2 / f_vtg.speed_kph.scale;
+					nmea_buf.hdg = f_vtg.true_track_degrees.value * 64 / f_vtg.true_track_degrees.scale;
 				}
 				break;
 			default:
@@ -443,8 +468,6 @@ void loop_gps()
 	}
 }
 
-uint8_t gps_com_cnt = 0;
-
 void loop_com_imu()
 {
 	while (1)
@@ -454,7 +477,7 @@ void loop_com_imu()
 			uart_com_flag = 0;
 			uart_rx_disable(uart_com);
 
-			if (strcmp((char *)uart_com_buf, "SHUTDOWN") == 0)
+			if (strcmp((char *)com_uart_evt.buf, "SHUTDOWN") == 0)
 			{
 				k_timer_stop(&timer_buz);
 				k_timer_stop(&timer_sen);
@@ -514,7 +537,7 @@ void loop_buz()
 			buzzer_ping(7500);
 			k_msleep(100);
 			buzzer_ping(0);
-			adc_read(adcc1, &sequence);
+			adc_read(adcc1, &adc_sen_seq);
 
 			if (adcbuf < 2400)
 			{
@@ -534,6 +557,10 @@ void loop_buz()
 	}
 }
 
+K_TIMER_DEFINE(timer_sen, sen_poll_exp, NULL);
+K_TIMER_DEFINE(timer_gps, gps_poll_exp, NULL);
+K_TIMER_DEFINE(timer_buz, dat_ping_exp, NULL);
+
 K_THREAD_DEFINE(thread_sen_spi,	STACKSIZE, loop_sen_spi,	NULL, NULL, NULL, 1,	0, 0);
 K_THREAD_DEFINE(thread_sen_i2c,	STACKSIZE, loop_sen_i2c,	NULL, NULL, NULL, 2,	0, 0);
 K_THREAD_DEFINE(thread_gps,		STACKSIZE, loop_gps,		NULL, NULL, NULL, 3,	0, 0);
@@ -549,7 +576,7 @@ int main()
 	gpio_pin_configure(gpib, 14, GPIO_INPUT);
 	gpio_pin_configure(gpid, 3, GPIO_OUTPUT_INACTIVE);
 
-	i2c_configure(i2c_sen, i2c_cfg);
+	i2c_configure(i2c_sen, i2c_sen_cfg);
 
 	uart_callback_set(uart_com, com_uart_cb, NULL);
 	uart_callback_set(uart_gps, gps_uart_cb, NULL);

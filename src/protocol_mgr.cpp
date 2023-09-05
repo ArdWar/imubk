@@ -7,7 +7,7 @@ PROTOCOL::PROTOCOL(uint8_t *data, uint8_t id, uint8_t count, uint8_t pldlen)
 	_pldlen = pldlen;
 	_count = count;
 
-	memset(_data, 0, _pldlen + 4);
+	memset(_data, 0, _pldlen + 4);	// why is this even necessary?
 
 	_data[0] = 0xA5;
 	_data[1] = _id << 6 | (_pldlen & 0x3F);
@@ -40,6 +40,7 @@ uint8_t PROTOCOL::tail(uint16_t data)
 
 int8_t PROTOCOL::calcCRC()
 {
+	// supposed to be CRC-8-CCITT
 	_data[3 + _pldlen] = crc8(&_data[1], _pldlen + 2, 0x07, 0x00, false);
 	return 0;
 }
@@ -71,9 +72,9 @@ int8_t PROTOCOL_IMU::putLSM6Data(LSM6RawData *data)
 	_data[10] = half(data->accY >> 4, data->accZ >> 4); // YZ
 	_data[11] = tail(data->accZ >> 4);					// ZZ
 
-	_data[12] = head(data->rotX >> 4);					// XX  1234 -> 23
-	_data[13] = half(data->rotX >> 4, data->rotY >> 4); // XY  1234 -> 40 | 1234 -> 02
-	_data[14] = tail(data->rotY >> 4);					// YY  1234 -> 34
+	_data[12] = head(data->rotX >> 4);					// XX
+	_data[13] = half(data->rotX >> 4, data->rotY >> 4); // XY
+	_data[14] = tail(data->rotY >> 4);					// YY
 	_data[15] = head(data->rotZ >> 4);					// ZZ
 	_data[16] = half(data->rotZ >> 4, 0);				// Z0
 	return 0;
@@ -91,7 +92,7 @@ int8_t PROTOCOL_IMU::putLIS3Data(LIS3RawData *data)
 
 int8_t PROTOCOL_IMU::putMTI3Data(MTI3RawData *data)
 {
-	_data[21] = head(data->accX >> 17);					   // XX    Accelerometer in ms^(-2)  amx +/- 256    MTI default is 12.20
+	_data[21] = head(data->accX >> 17);					   // XX    Accelerometer in ms^(-2)  max +/- 256    MTI default is 12.20
 	_data[22] = half(data->accX >> 17, data->accY >> 17);  // XY
 	_data[23] = tail(data->accY >> 17);					   // YY
 	_data[24] = head(data->accZ >> 17);					   // ZZ
@@ -100,18 +101,18 @@ int8_t PROTOCOL_IMU::putMTI3Data(MTI3RawData *data)
 	_data[27] = head(data->rotY >> 11);					   // YY
 	_data[28] = half(data->rotY >> 11, data->rotZ >> 11);  // YZ
 	_data[29] = tail(data->rotZ >> 11);					   // ZZ
-	_data[30] = head(data->magX >> 11);					   // XX  1234 -> 23
-	_data[31] = half(data->magX >> 11, data->magY >> 11);  // XY  1234 -> 40 | 1234 -> 02
-	_data[32] = tail(data->magY >> 11);					   // YY  1234 -> 34
+	_data[30] = head(data->magX >> 11);					   // XX
+	_data[31] = half(data->magX >> 11, data->magY >> 11);  // XY
+	_data[32] = tail(data->magY >> 11);					   // YY
 	_data[33] = head(data->magZ >> 11);					   // ZZ
 	_data[34] = half(data->magZ >> 11, data->pitch >> 17); // ZX
 	_data[35] = tail(data->pitch >> 17);				   // XX
 	_data[36] = head(data->roll >> 17);					   // YY
 	_data[37] = half(data->roll >> 17, data->yaw >> 17);   // YZ
 	_data[38] = tail(data->yaw >> 17);					   // ZZ
-	_data[39] = head(data->dvX >> 16);					   // XX  1234 -> 23
-	_data[40] = half(data->dvX >> 16, data->dvY >> 16);	   // XY  1234 -> 40 | 1234 -> 02
-	_data[41] = tail(data->dvY >> 16);					   // YY  1234 -> 34
+	_data[39] = head(data->dvX >> 16);					   // XX
+	_data[40] = half(data->dvX >> 16, data->dvY >> 16);	   // XY
+	_data[41] = tail(data->dvY >> 16);					   // YY
 	_data[42] = head(data->dvZ >> 16);					   // ZZ
 	_data[43] = half(data->dvZ >> 16, data->dqA >> 16);	   // ZX
 	_data[44] = tail(data->dqA >> 16);					   // XX

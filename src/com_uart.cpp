@@ -43,6 +43,7 @@ int8_t DATCOM::send()
 
 int8_t DATCOM::txFinish()
 {
+	// buffer deletion SHOULD BE incorporated in class destructor
 	delete _pld[_pldTail]->pld;
 	delete _pld[_pldTail];
 

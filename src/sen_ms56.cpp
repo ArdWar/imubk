@@ -31,6 +31,7 @@ int8_t MS56::getMeasurement(uint8_t *data, uint8_t *cnt)
 	uint8_t read = 0;
 	uint8_t buf[3];
 
+	// Theoretically it should work with 10ms round robin rate, but it doesnt...
 	if (_n == 0)
 	{
 		i2c_write_read(_i2c, _addr, &read, 1, buf, 3);
