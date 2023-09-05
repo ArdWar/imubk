@@ -28,15 +28,15 @@
 #define LIS3_ADDR 0x1E
 #define MS56_ADDR 0x77
 
-static const struct device *const gpib = DEVICE_DT_GET(DT_NODELABEL(gpiob));
-static const struct device *const gpic = DEVICE_DT_GET(DT_NODELABEL(gpioc));
-static const struct device *const gpid = DEVICE_DT_GET(DT_NODELABEL(gpiod));
-static const struct device *const adcc1 = DEVICE_DT_GET(DT_NODELABEL(adc1));
-static const struct device *const pwm_bz = DEVICE_DT_GET(DT_NODELABEL(pwm16));
-static const struct device *const spi_sen = DEVICE_DT_GET(DT_NODELABEL(spi1));
-static const struct device *const i2c_sen = DEVICE_DT_GET(DT_NODELABEL(i2c2));
-static const struct device *const uart_com = DEVICE_DT_GET(DT_NODELABEL(usart3));
-static const struct device *const uart_gps = DEVICE_DT_GET(DT_NODELABEL(usart1));
+static const struct device *const gpib		= DEVICE_DT_GET(DT_NODELABEL(gpiob));
+static const struct device *const gpic		= DEVICE_DT_GET(DT_NODELABEL(gpioc));
+static const struct device *const gpid		= DEVICE_DT_GET(DT_NODELABEL(gpiod));
+static const struct device *const adcc1		= DEVICE_DT_GET(DT_NODELABEL(adc1));
+static const struct device *const pwm_bz	= DEVICE_DT_GET(DT_NODELABEL(pwm16));
+static const struct device *const spi_sen	= DEVICE_DT_GET(DT_NODELABEL(spi1));
+static const struct device *const i2c_sen	= DEVICE_DT_GET(DT_NODELABEL(i2c2));
+static const struct device *const uart_com	= DEVICE_DT_GET(DT_NODELABEL(usart3));
+static const struct device *const uart_gps	= DEVICE_DT_GET(DT_NODELABEL(usart1));
 
 static struct adc_channel_cfg adc1c5c = ADC_CHANNEL_CFG_DT(DT_CHILD(DT_NODELABEL(adc1), channel_5));
 
@@ -534,12 +534,12 @@ void loop_buz()
 	}
 }
 
-K_THREAD_DEFINE(thread_sen_spi, STACKSIZE, loop_sen_spi, NULL, NULL, NULL, 1, 0, 0);
-K_THREAD_DEFINE(thread_sen_i2c, STACKSIZE, loop_sen_i2c, NULL, NULL, NULL, 2, 0, 0);
-K_THREAD_DEFINE(thread_gps, STACKSIZE, loop_gps, NULL, NULL, NULL, 3, 0, 0);
-K_THREAD_DEFINE(thread_com_imu, STACKSIZE, loop_com_imu, NULL, NULL, NULL, 4, 0, 0);
-K_THREAD_DEFINE(thread_com_gps, STACKSIZE, loop_com_gps, NULL, NULL, NULL, 5, 0, 0);
-K_THREAD_DEFINE(thread_buz, STACKSIZE, loop_buz, NULL, NULL, NULL, 99, 0, 0);
+K_THREAD_DEFINE(thread_sen_spi,	STACKSIZE, loop_sen_spi,	NULL, NULL, NULL, 1,	0, 0);
+K_THREAD_DEFINE(thread_sen_i2c,	STACKSIZE, loop_sen_i2c,	NULL, NULL, NULL, 2,	0, 0);
+K_THREAD_DEFINE(thread_gps,		STACKSIZE, loop_gps,		NULL, NULL, NULL, 3,	0, 0);
+K_THREAD_DEFINE(thread_com_imu,	STACKSIZE, loop_com_imu,	NULL, NULL, NULL, 4,	0, 0);
+K_THREAD_DEFINE(thread_com_gps,	STACKSIZE, loop_com_gps,	NULL, NULL, NULL, 5,	0, 0);
+K_THREAD_DEFINE(thread_buz,		STACKSIZE, loop_buz,		NULL, NULL, NULL, 99,	0, 0);
 
 int main()
 {
