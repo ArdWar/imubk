@@ -21,7 +21,8 @@
 #include "data.hpp"
 #include "minmea.h"
 
-#define STACKSIZE 512
+#define STACKSIZE 1024
+#define SMALLSTACKSIZE	512
 
 #define ADXL_ADDR 0x53
 #define LSM6_ADDR 0x6A
@@ -100,6 +101,10 @@ uart_event_rx gps_uart_evt;
 void sen_poll_exp(struct k_timer *timer);
 void gps_poll_exp(struct k_timer *timer);
 void dat_ping_exp(struct k_timer *timer);
+
+K_TIMER_DEFINE(timer_sen, sen_poll_exp, NULL);
+K_TIMER_DEFINE(timer_gps, gps_poll_exp, NULL);
+K_TIMER_DEFINE(timer_buz, dat_ping_exp, NULL);
 
 void buzzer_ping(int16_t freq)
 {
@@ -557,24 +562,20 @@ void loop_buz()
 	}
 }
 
-K_TIMER_DEFINE(timer_sen, sen_poll_exp, NULL);
-K_TIMER_DEFINE(timer_gps, gps_poll_exp, NULL);
-K_TIMER_DEFINE(timer_buz, dat_ping_exp, NULL);
-
-K_THREAD_DEFINE(thread_sen_spi,	STACKSIZE, loop_sen_spi,	NULL, NULL, NULL, 1,	0, 0);
-K_THREAD_DEFINE(thread_sen_i2c,	STACKSIZE, loop_sen_i2c,	NULL, NULL, NULL, 2,	0, 0);
-K_THREAD_DEFINE(thread_gps,		STACKSIZE, loop_gps,		NULL, NULL, NULL, 3,	0, 0);
-K_THREAD_DEFINE(thread_com_imu,	STACKSIZE, loop_com_imu,	NULL, NULL, NULL, 4,	0, 0);
-K_THREAD_DEFINE(thread_com_gps,	STACKSIZE, loop_com_gps,	NULL, NULL, NULL, 5,	0, 0);
-K_THREAD_DEFINE(thread_buz,		STACKSIZE, loop_buz,		NULL, NULL, NULL, 99,	0, 0);
+K_THREAD_DEFINE(thread_sen_spi,	STACKSIZE,		loop_sen_spi,	NULL, NULL, NULL, 1,	0, 0);
+K_THREAD_DEFINE(thread_sen_i2c,	STACKSIZE,		loop_sen_i2c,	NULL, NULL, NULL, 2,	0, 0);
+K_THREAD_DEFINE(thread_gps,		STACKSIZE,		loop_gps,		NULL, NULL, NULL, 3,	0, 0);
+K_THREAD_DEFINE(thread_com_imu,	STACKSIZE,		loop_com_imu,	NULL, NULL, NULL, 4,	0, 0);
+K_THREAD_DEFINE(thread_com_gps,	STACKSIZE,		loop_com_gps,	NULL, NULL, NULL, 5,	0, 0);
+K_THREAD_DEFINE(thread_buz,		SMALLSTACKSIZE,	loop_buz,		NULL, NULL, NULL, 99,	0, 0);
 
 int main()
 {
-	gpio_pin_configure(gpic, 6, GPIO_OUTPUT_INACTIVE); // LED
-	gpio_pin_configure(gpic, 7, GPIO_OUTPUT_INACTIVE); // LED
-	gpio_pin_configure(gpid, 2, GPIO_OUTPUT_INACTIVE);
-	gpio_pin_configure(gpib, 14, GPIO_INPUT);
-	gpio_pin_configure(gpid, 3, GPIO_OUTPUT_INACTIVE);
+	gpio_pin_configure(gpic, 6,		GPIO_OUTPUT_INACTIVE); // LED
+	gpio_pin_configure(gpic, 7,		GPIO_OUTPUT_INACTIVE); // LED
+	gpio_pin_configure(gpid, 2,		GPIO_OUTPUT_INACTIVE);
+	gpio_pin_configure(gpib, 14,	GPIO_INPUT);
+	gpio_pin_configure(gpid, 3,		GPIO_OUTPUT_INACTIVE);
 
 	i2c_configure(i2c_sen, i2c_sen_cfg);
 
@@ -600,9 +601,9 @@ int main()
 	k_sleep(K_MSEC(200));
 	buzzer_ping(0);
 
-	k_timer_start(&timer_sen, K_MSEC(500), K_MSEC(10));					 // 100Hz = 10mS
-	k_timer_start(&timer_gps, K_MSEC(503), K_MSEC(100));				 // 20Hz = 50mS
-	k_timer_start(&timer_buz, K_SECONDS(rate_buz), K_SECONDS(rate_buz)); // 20Hz = 50mS
+	k_timer_start(&timer_sen, K_MSEC(500),			K_MSEC(10));					 // 100Hz = 10mS
+	k_timer_start(&timer_gps, K_MSEC(503),			K_MSEC(100));				 // 20Hz = 50mS
+	k_timer_start(&timer_buz, K_SECONDS(rate_buz),	K_SECONDS(rate_buz)); // 20Hz = 50mS
 
 	uint8_t maincnt = 0;
 	while (1)

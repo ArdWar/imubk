@@ -13,6 +13,7 @@ int8_t LIS3::setup()
 	uint8_t devid[2] = {0x0F}; // WHO
 	i2c_write_read(_i2c, _addr, &devid[0], 1, &devid[0], 1);
 
+	// printk("LIS3 %02X %02X %02X\n", devid[0], devid[1]);
 	uint8_t txbuf[] = {0x20, 0b01111110, 0b00000000, 0b00000000, 0b00001100, 0b01000000}; // TNE 155hz 4 gauss
 	devid[1] = i2c_write(_i2c, txbuf, 6, _addr);										  // REBOOT
 
