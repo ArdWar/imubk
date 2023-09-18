@@ -1,2 +1,3 @@
-Zephyr version: 3.4.0
-toolchain: zephyr 0.15.2
+RTOS: Zephyr 3.4.0
+
+Toolchain: Zephyr 0.15.2
